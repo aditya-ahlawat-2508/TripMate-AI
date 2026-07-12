@@ -25,6 +25,8 @@ all coordinated through a LangGraph workflow with MCP-based tool integrations.
 - 💾 Conversation state persistence using PostgreSQL
 - ⚡ LLM-powered responses with Groq
 
+
+
 ## Tech Stack
 
 - Python 3.10+
@@ -37,6 +39,8 @@ all coordinated through a LangGraph workflow with MCP-based tool integrations.
 - Tavily API
 - AviationStack API
 - MCP via `langchain-mcp-adapters` and `mcp`
+
+
 
 ## State and MCP Integration
 
@@ -70,6 +74,8 @@ The main travel workflow in `backend.py` calls these helpers from the flight, ho
 └── tools/                      # Flight and web search integrations
 ```
 
+
+
 ## Prerequisites
 
 Before running the project locally, make sure you have:
@@ -82,6 +88,8 @@ Before running the project locally, make sure you have:
   - AviationStack
   - OpenWeather
 - `uvx` available for local `aviationstack-mcp` usage (or adjust `mcp_client.py` accordingly)
+
+
 
 ## Environment Variables
 
@@ -96,6 +104,8 @@ OPENWEATHER_API_KEY=your_openweather_api_key
 DEFAULT_ORIGIN_IATA=DAC
 ```
 
+
+
 ## Installation
 
 ```bash
@@ -103,6 +113,8 @@ python -m venv .venv
 source .venv/bin/activate   # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+
 
 ## Running the App
 
@@ -117,6 +129,8 @@ Then open your browser at:
 ```text
 http://127.0.0.1:8000/
 ```
+
+
 
 ## Using MCP Tools
 
@@ -137,6 +151,8 @@ curl -X POST http://127.0.0.1:8000/api/travel \
   -d '{"message":"Plan a 3-day trip to Tokyo with a budget of $1200"}'
 ```
 
+
+
 ## How the Workflow Works
 
 1. The user submits a travel request.
@@ -145,6 +161,8 @@ curl -X POST http://127.0.0.1:8000/api/travel \
 4. The weather agent calls the custom weather MCP server.
 5. The itinerary agent creates a practical travel plan.
 6. The final response is returned through the web API.
+
+
 
 ## Contributing
 
@@ -155,6 +173,12 @@ Contributions are welcome. If you want to improve the app, add new travel featur
 3. Make your changes
 4. Open a pull request
 
+
+
 ## Acknowledgments
 
 This project is built with the help of modern LLM tooling, MCP integrations, and travel APIs. It is intended as a practical example of combining LangGraph agents with real-world applications.
+
+
+
+postgresql://adicodes:[***REMOVED***@dpg-d99ainjeo5us738acc60-a.oregon-postgres.render.com](mailto:***REMOVED***@dpg-d99ainjeo5us738acc60-a.oregon-postgres.render.com)/agent_memory_rv9a

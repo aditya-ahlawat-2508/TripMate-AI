@@ -1,6 +1,8 @@
 import os
+import sys
 import asyncio
 import certifi
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_groq import ChatGroq
@@ -42,11 +44,11 @@ client = MultiServerMCPClient(
             }
         },
 
-         "weather": {
+        "weather": {
             "transport": "stdio",
-            "command": r"C:\Anaconda3\envs\travel\python.exe",
+            "command": sys.executable,
             "args": [
-                r"D:\Bappy\Coding\Youtube\Deployments\TripMate-AI-Using-MCP\custom_weather_mcp_server.py"
+                str(Path(__file__).parent / "custom_weather_mcp_server.py")
             ],
             "env": {
                 "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY
@@ -132,12 +134,9 @@ async def aviation_mcp_call(
     tool_args: dict = None
 ):
 
-    tools = await client.get_tools()
+    await initialize_mcp()
 
-    tool = next(
-        t for t in tools
-        if t.name == tool_name
-    )
+    tool = aviation_tools[tool_name]
 
     result = await tool.ainvoke(
         tool_args or {}
@@ -206,7 +205,7 @@ async def forecast_mcp_search(city: str):
 # Destination Extractor
 ###################################
 
-def extract_destination(query: str):
+async def extract_destination(query: str):
 
     prompt = f"""
     Extract only the destination city or country.
@@ -217,7 +216,7 @@ def extract_destination(query: str):
     Return only destination name.
     """
 
-    response = llm.invoke(prompt)
+    response = await llm.ainvoke(prompt)
 
     return response.content.strip()
 

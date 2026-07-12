@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 import traceback
 import uvicorn
@@ -8,19 +9,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from backend import run_travel_agent
-
-# This is to allow nested event loops for async calls in FastAPI
-import nest_asyncio
-nest_asyncio.apply()
+from backend import build_travel_graph, run_travel_agent
 
 
 BASE_DIR = Path(__file__).resolve().parent
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.travel_graph, conn = await build_travel_graph()
+    try:
+        yield
+    finally:
+        await conn.close()
+
+
 app = FastAPI(
     title="TripMate AI",
     description="LangGraph Multi-Agent Travel Planner with FastAPI Frontend",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 
@@ -53,7 +61,7 @@ async def home(request: Request):
 
 
 @app.post("/api/travel")
-async def travel_planner(request_data: TravelRequest):
+async def travel_planner(request: Request, request_data: TravelRequest):
     try:
         user_message = request_data.message.strip()
 
@@ -66,7 +74,8 @@ async def travel_planner(request_data: TravelRequest):
                 }
             )
 
-        result = run_travel_agent(
+        result = await run_travel_agent(
+            request.app.state.travel_graph,
             user_input=user_message,
             thread_id=request_data.thread_id
         )
@@ -78,6 +87,7 @@ async def travel_planner(request_data: TravelRequest):
                 "answer": result["answer"],
                 "flight_results": result["flight_results"],
                 "hotel_results": result["hotel_results"],
+                "weather_results": result["weather_results"],
                 "itinerary": result["itinerary"],
                 "llm_calls": result["llm_calls"],
             }
