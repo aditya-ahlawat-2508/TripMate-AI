@@ -222,3 +222,6 @@ __marimo__/
 
 # Excalidraw drawings: images are base64-embedded, so these run to tens of MB
 excalidraw_files/
+
+CLAUDE.md
+
