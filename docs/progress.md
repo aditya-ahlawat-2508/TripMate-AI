@@ -58,11 +58,53 @@ needs either a provider decision or the Phase 2 auth/typed-graph work):
   graph from blueprint Section 4.
 - Hotels are still raw Tavily web snippets, not structured/sourced rates.
 
+## Decisions (2026-09-23)
+
+Asked the project owner at the end of the Phase 0/1 session:
+- **Scope**: commit to the full SaaS rebuild now (not pausing at the
+  stabilized single-service app).
+- **Flight fares**: Duffel, once Phase 3 (real data) starts. Needs the
+  owner to sign up and drop a key in `apps/api/.env` — not something this
+  session can do on its own.
+- **Auth**: Clerk, once Phase 2's auth work starts.
+
+## Phase 0 — Monorepo split (done: 2026-09-23)
+
+Moved the stabilized single-service app into the blueprint's target layout
+without changing its behavior:
+- `apps/api/`: all Python source, `tests/`, `tools/`, `static/`,
+  `templates/`, `Dockerfile`, `.dockerignore`, `.env.example`,
+  `pyproject.toml`, `requirements*.txt`. Re-verified end-to-end after the
+  move (pytest, ruff, and a live local-Postgres run of
+  `build_travel_graph()` + `/health` through the FastAPI lifespan) —
+  nothing broke.
+- `infra/docker-compose.yml`: moved from the repo root.
+- `apps/web/`: scaffolded with `create-next-app` (TypeScript, Tailwind,
+  App Router, ESLint) per the blueprint's frontend stack choice. Default
+  boilerplate page replaced with a placeholder; `npm run lint` and
+  `npm run build` both pass. **shadcn/ui, TanStack Query, Framer Motion,
+  Mapbox/MapLibre, dnd-kit, react-hook-form+zod are not installed yet** —
+  intentionally deferred to Phase 4 (actual UI work) rather than adding
+  dependencies with nothing using them yet.
+- CI (`.github/workflows/ci.yml`) split into an `api` job
+  (`ruff check` + `pytest`, scoped to `apps/api`) and a `web` job
+  (`npm run lint` + `npm run build`, scoped to `apps/web`).
+- Root `README.md` rewritten as a short monorepo overview; the old
+  Python-specific content moved to `apps/api/README.md` with paths fixed.
+- `graph/`, `providers/`, `models/`, `workers/`, `packages/api-client/`,
+  `evals/` from the blueprint's target layout **do not exist yet** — they
+  get created when Phase 2/3/4 actually need them, not as empty
+  placeholders now.
+
 ## Phase 2+ — not started
 
-The monorepo split, Next.js frontend, typed TripSpec/Send-API graph, real
-data providers, auth, and payments are all still on the blueprint, not in
-the repo. These need decisions from the project owner before any code gets
-written (see the open questions raised at the end of the Phase 0/1 session)
-— provider choices, hosting, and how much of the 12-week plan to actually
-commit to right now.
+Typed TripSpec/Send-API graph rewrite (Phase 2), real data providers —
+Duffel for fares, still need to pick a stays/places/routing provider
+(Phase 3), the actual Next.js UI (Phase 4), Clerk auth + Razorpay/Stripe
+payments (Phase 5), and launch prep (Phase 6) are all still just the plan,
+not code. Given the invasiveness of Phase 2 in particular (HITL
+`interrupt()`, parallel fan-out via the Send API, and a verifier node all
+rework the currently-working conversational graph), the next session should
+open with a concrete Phase 2 plan for review before writing that code —
+per the blueprint's own build methodology ("start each phase by asking for
+a plan and reviewing it before any code is written").
