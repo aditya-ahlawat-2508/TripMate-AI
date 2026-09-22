@@ -1,11 +1,14 @@
+import json
 import os
+import re
 import sys
-import asyncio
-import certifi
+from datetime import date
 from pathlib import Path
+
+import certifi
 from dotenv import load_dotenv
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_groq import ChatGroq
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
@@ -15,7 +18,6 @@ load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 AVIATION_STACK_API_KEY = os.getenv("AVIATIONSTACK_API_KEY")
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 
@@ -30,7 +32,12 @@ client = MultiServerMCPClient(
     {
         "tavily": {
             "transport": "streamable_http",
-            "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
+            "url": "https://mcp.tavily.com/mcp/",
+            # Header auth instead of a URL query param, so the key doesn't
+            # land in proxy/server access logs.
+            "headers": {
+                "Authorization": f"Bearer {TAVILY_API_KEY}"
+            }
         },
 
         "aviationstack": {
@@ -50,17 +57,9 @@ client = MultiServerMCPClient(
             "args": [
                 str(Path(__file__).parent / "custom_weather_mcp_server.py")
             ],
-            "env": {
-                "OPENWEATHER_API_KEY": OPENWEATHER_API_KEY
-            }
-        }
-
-        
-
-        
-
+            # Open-Meteo is free and keyless, so no env vars are needed here.
+        },
     }
-
 )
 
 
@@ -84,6 +83,21 @@ async def get_all_tools():
 ###################################
 
 
+def find_tool(tools, name: str):
+    """Look up an MCP tool by exact name, with a clear error if the upstream
+    server renamed or dropped it (instead of a bare StopIteration)."""
+
+    for tool in tools:
+        if tool.name == name:
+            return tool
+
+    available = ", ".join(sorted(t.name for t in tools)) or "none"
+    raise RuntimeError(
+        f"MCP tool '{name}' was not found. Available tools: {available}. "
+        "An upstream MCP server may have renamed or removed this tool."
+    )
+
+
 search_tool = None
 aviation_tools = {}
 
@@ -102,11 +116,7 @@ async def initialize_mcp():
     for tool in tools:
         print(tool.name)
 
-    search_tool = next(
-        tool
-        for tool in tools
-        if tool.name == "tavily_search"
-    )
+    search_tool = find_tool(tools, "tavily_search")
 
     aviation_tools = {
         tool.name: tool
@@ -135,6 +145,13 @@ async def aviation_mcp_call(
 ):
 
     await initialize_mcp()
+
+    if tool_name not in aviation_tools:
+        available = ", ".join(sorted(aviation_tools)) or "none"
+        raise RuntimeError(
+            f"MCP tool '{tool_name}' was not found. Available aviation tools: {available}. "
+            "The aviationstack-mcp server may have renamed or removed this tool."
+        )
 
     tool = aviation_tools[tool_name]
 
@@ -166,15 +183,8 @@ async def initialize_weather_tools():
 
     tools = await client.get_tools()
 
-    weather_tool = next(
-        t for t in tools
-        if t.name == "get_current_weather"
-    )
-
-    forecast_tool = next(
-        t for t in tools
-        if t.name == "get_forecast"
-    )
+    weather_tool = find_tool(tools, "get_current_weather")
+    forecast_tool = find_tool(tools, "get_forecast")
 
 
 async def weather_mcp_search(city: str):
@@ -188,13 +198,19 @@ async def weather_mcp_search(city: str):
     )
 
 
-async def forecast_mcp_search(city: str):
+async def forecast_mcp_search(
+    city: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
 
     await initialize_weather_tools()
 
     return await forecast_tool.ainvoke(
         {
-            "city": city
+            "city": city,
+            "start_date": start_date,
+            "end_date": end_date,
         }
     )
 
@@ -219,5 +235,45 @@ async def extract_destination(query: str):
     response = await llm.ainvoke(prompt)
 
     return response.content.strip()
+
+
+
+
+###################################
+# Trip Date Extractor
+###################################
+
+async def extract_trip_dates(query: str, today: str | None = None):
+    """Best-effort extraction of a trip's start/end dates from free text.
+
+    Returns (start_date, end_date) as "YYYY-MM-DD" strings, or (None, None)
+    if the query doesn't specify dates (callers should fall back to a
+    default window, e.g. the next 5 days).
+    """
+
+    today = today or date.today().isoformat()
+
+    prompt = f"""
+    Today's date is {today}.
+
+    Extract the trip's start and end date from this travel request. If a
+    duration is given instead of an end date (e.g. "5 days"), compute the
+    end date. If no date or duration is mentioned at all, return nulls.
+
+    Query:
+    {query}
+
+    Respond with ONLY a JSON object, no other text, in exactly this shape:
+    {{"start_date": "YYYY-MM-DD" or null, "end_date": "YYYY-MM-DD" or null}}
+    """
+
+    response = await llm.ainvoke(prompt)
+
+    try:
+        match = re.search(r"\{.*\}", response.content, re.DOTALL)
+        data = json.loads(match.group(0)) if match else {}
+        return data.get("start_date"), data.get("end_date")
+    except (json.JSONDecodeError, AttributeError):
+        return None, None
 
 

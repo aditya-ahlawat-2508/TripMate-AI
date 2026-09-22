@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# uv provides `uvx`, which the aviationstack MCP server is spawned with at
+# runtime (mcp_client.py). Without it the flight MCP server can't start.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip

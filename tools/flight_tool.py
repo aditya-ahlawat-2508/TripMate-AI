@@ -1,7 +1,8 @@
-import os 
-import re 
-import certifi
+import os
+import re
+
 import airportsdata
+import certifi
 import pycountry
 import requests
 from dotenv import load_dotenv
@@ -12,8 +13,6 @@ os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 API_KEY = os.getenv("AVIATIONSTACK_API_KEY")
-if not API_KEY:
-    raise RuntimeError("AVIATIONSTACK_API_KEY is missing from .env")
 
 # Default origin when user says only destination, e.g. "Japan trip"
 # Change this if your default location is not INDIA/DELHI.
@@ -274,7 +273,11 @@ def resolve_location_to_iata(location: str):
         if location_clean in name:
             score += 50
 
-        if "international" in name:
+        # Only let the "international airport" tiebreaker count once there's
+        # already a real match — otherwise every unmatched query silently
+        # resolves to whichever "International Airport" sorts last by IATA
+        # code, instead of correctly resolving to nothing.
+        if score > 0 and "international" in name:
             score += 10
 
         if score > 0:

@@ -1,8 +1,9 @@
+import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-import traceback
-import uvicorn
 
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,17 +12,19 @@ from pydantic import BaseModel
 
 from backend import build_travel_graph, run_travel_agent
 
-
 BASE_DIR = Path(__file__).resolve().parent
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("tripmate")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.travel_graph, conn = await build_travel_graph()
+    app.state.travel_graph, pool = await build_travel_graph()
     try:
         yield
     finally:
-        await conn.close()
+        await pool.close()
 
 
 app = FastAPI(
@@ -93,15 +96,15 @@ async def travel_planner(request: Request, request_data: TravelRequest):
             }
         )
 
-    except Exception as e:
-        print("ERROR:", e)
-        traceback.print_exc()
+    except Exception:
+        error_id = uuid.uuid4().hex[:8]
+        logger.exception("Unhandled error in /api/travel [error_id=%s]", error_id)
 
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
-                "error": str(e)
+                "error": f"Something went wrong on our end (reference: {error_id}).",
             }
         )
 

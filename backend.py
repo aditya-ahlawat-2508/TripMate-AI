@@ -1,4 +1,5 @@
-import os 
+import os
+
 import certifi
 from dotenv import load_dotenv
 
@@ -7,24 +8,34 @@ load_dotenv()
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
-from typing import TypedDict, Annotated
 import operator
 import uuid
-from psycopg import AsyncConnection
-from psycopg.rows import dict_row
+from typing import Annotated, TypedDict
+from urllib.parse import urlparse
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import (
+    AIMessage,
     AnyMessage,
     HumanMessage,
-    AIMessage,
     SystemMessage,
 )
 from langchain_groq import ChatGroq
-# from tools.tavily_tool import tavily_search
-# from tools.flight_tool import search_flights
-from mcp_client import tavily_mcp_search, aviation_mcp_call, extract_destination, forecast_mcp_search, weather_mcp_search
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.graph import END, START, StateGraph
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+
+from mcp_client import (
+    aviation_mcp_call,
+    extract_destination,
+    extract_trip_dates,
+    forecast_mcp_search,
+    tavily_mcp_search,
+    weather_mcp_search,
+)
+from tools.flight_tool import AIRPORTS, parse_route
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def get_database_url():
@@ -32,10 +43,13 @@ def get_database_url():
 
     if not database_url:
         raise ValueError(
-            "DATABASE_URL is missing. Please add your Render PostgreSQL External Database URL to .env"
+            "DATABASE_URL is missing. Please add your PostgreSQL connection string to .env"
         )
 
-    if "sslmode=" not in database_url:
+    host = urlparse(database_url).hostname or ""
+    is_local = host in LOCAL_HOSTS
+
+    if not is_local and "sslmode=" not in database_url:
         separator = "&" if "?" in database_url else "?"
         database_url = f"{database_url}{separator}sslmode=require"
 
@@ -75,21 +89,6 @@ class TravelState(TypedDict):
 # Flight Agent
 # =========================
 
-# def flight_agent(state: TravelState):
-#     query = state["user_query"]
-#     flight_data = search_flights(query)
-
-#     return {
-#         "flight_results": flight_data,
-#         "messages": [
-#             AIMessage(content="Flight results fetched.")
-#         ],
-#         "llm_calls": state.get("llm_calls", 0) + 1
-#     }
-
-
-
-
 # Flight Tool Router Prompt
 FLIGHT_AGENT_PROMPT = """
 You are a travel flight expert.
@@ -97,48 +96,54 @@ You are a travel flight expert.
 User Query:
 {query}
 
-Airport Information:
-{airport_data}
+Resolved route (from IATA airport data, not a guess):
+- Departure: {dep_info}
+- Arrival: {arr_info}
 
-Airline Information:
+A sample of airlines AviationStack knows about:
 {airline_data}
 
-Generate:
+AviationStack provides flight schedules/status only — it has no ticket
+pricing data. Do NOT invent or estimate a specific fare number or price
+range; if pricing comes up, say live pricing isn't available here and
+suggest checking an airline site or OTA.
 
-1. Likely departure airport
-2. Likely arrival airport
-3. Airlines serving this route
-4. Typical flight duration
-5. Estimated airfare range
-6. Peak season pricing warning
-7. Booking advice
+Generate:
+1. Confirmation of the departure and arrival airports above (note if either
+   could not be resolved from the query).
+2. Airlines plausibly serving this route, if evident from the sample above.
+3. Typical flight duration for a route like this, described qualitatively.
+4. General booking advice (no prices).
 
 Return concise travel guidance.
 """
 
 
+def describe_airport(iata: str | None) -> str:
+    if not iata:
+        return "could not be determined from the request"
+
+    airport = AIRPORTS.get(iata)
+    if not airport:
+        return iata
+
+    return f"{iata} — {airport.get('name')}, {airport.get('city')}, {airport.get('country')}"
 
 
 # Flight Agent
 async def flight_agent(state: TravelState):
-    print("\nINSIDE FLIGHT AGENT\n")
-
     query = state["user_query"]
 
     try:
-
-        airports = await aviation_mcp_call("list_airports")
+        dep_iata, arr_iata = parse_route(query)
 
         airlines = await aviation_mcp_call("list_airlines")
 
-
-        print("\nAIRPORTS:", airports)
-        print("\nAIRLINES:", airlines)
-
         prompt = FLIGHT_AGENT_PROMPT.format(
             query=query,
-            airport_data=str(airports)[:3000],
-            airline_data=str(airlines)[:3000]
+            dep_info=describe_airport(dep_iata),
+            arr_info=describe_airport(arr_iata),
+            airline_data=str(airlines)[:2000]
         )
 
         response = await llm.ainvoke([
@@ -174,7 +179,6 @@ async def flight_agent(state: TravelState):
 
 async def hotel_agent(state: TravelState):
     query = f"Best hotels for {state['user_query']}"
-    # hotel_results = tavily_search(query)
     hotel_results = await tavily_mcp_search(query)
 
     return {
@@ -195,10 +199,11 @@ async def hotel_agent(state: TravelState):
 async def weather_agent(state: TravelState):
 
     city = await extract_destination(state["user_query"])
+    start_date, end_date = await extract_trip_dates(state["user_query"])
 
     weather_data = await weather_mcp_search(city)
 
-    forecast_data = await forecast_mcp_search(city)
+    forecast_data = await forecast_mcp_search(city, start_date, end_date)
 
     return {
         "weather_results": f"""
@@ -334,22 +339,29 @@ graph.add_edge("final_agent", END)
 # asyncio.get_running_loop(), so it cannot exist outside a running loop.
 
 async def build_travel_graph():
-    """Open the async Postgres connection and compile the graph.
+    """Open a pooled async Postgres connection and compile the graph.
 
-    Returns (compiled_graph, conn) — the caller owns the connection and must
-    close it on shutdown.
+    A single shared AsyncConnection can't serve concurrent requests safely;
+    a pool lets each request borrow its own connection.
+
+    Returns (compiled_graph, pool) — the caller owns the pool and must close
+    it on shutdown.
     """
-    conn = await AsyncConnection.connect(
+    pool = AsyncConnectionPool(
         get_database_url(),
-        autocommit=True,
-        prepare_threshold=0,
-        row_factory=dict_row
+        open=False,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
     )
+    await pool.open()
 
-    checkpointer = AsyncPostgresSaver(conn)
+    checkpointer = AsyncPostgresSaver(pool)
     await checkpointer.setup()
 
-    return graph.compile(checkpointer=checkpointer), conn
+    return graph.compile(checkpointer=checkpointer), pool
 
 
 
