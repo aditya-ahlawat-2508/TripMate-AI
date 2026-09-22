@@ -28,8 +28,10 @@ all coordinated through a LangGraph workflow with MCP-based tool integrations.
 - 💾 Conversation state persistence using PostgreSQL (pooled connections)
 - ⚡ LLM-powered responses with Groq
 
-See `docs/blueprint.md` for the longer-term product plan and
-`docs/progress.md` for what's actually been built against it.
+This is the API app in the TripMate monorepo (`apps/api/`). See the
+[repo root README](../../README.md) for the overall layout, and
+`../../docs/blueprint.md` / `../../docs/progress.md` for the product plan
+and current status.
 
 
 
@@ -70,21 +72,21 @@ The main travel workflow in `backend.py` calls these helpers from the flight, ho
 ## Project Structure
 
 ```text
-.
+apps/api/
 ├── app.py                      # FastAPI app entry point
 ├── backend.py                  # LangGraph travel workflow
 ├── mcp_client.py               # MCP client and tool integration
 ├── custom_weather_mcp_server.py# Local weather MCP server (Open-Meteo)
 ├── requirements.txt            # Runtime dependencies
 ├── requirements-dev.txt        # + ruff/pytest for local dev and CI
-├── docker-compose.yml          # Local Postgres for dev
 ├── static/                     # Static frontend assets
 ├── templates/                  # HTML templates
 ├── tools/                      # IATA/airport resolution, used by flight_agent
-├── tests/                      # pytest unit tests (no live network/DB)
-├── docs/                       # Product blueprint + progress tracking
-└── .github/workflows/          # CI (lint + test on push/PR)
+└── tests/                      # pytest unit tests (no live network/DB)
 ```
+
+See the [repo root README](../../README.md) for `docs/`, `infra/`, and
+`.github/workflows/`, which live one level up.
 
 
 
@@ -103,8 +105,8 @@ Before running the project locally, make sure you have:
   or subprocess setup beyond that; it's powered by the free, keyless
   Open-Meteo API)
 
-No Postgres of your own? `docker compose up -d postgres` starts one locally
-using `docker-compose.yml` in the repo root.
+No Postgres of your own? From the repo root:
+`docker compose -f infra/docker-compose.yml up -d postgres`.
 
 ## Environment Variables
 
@@ -125,6 +127,8 @@ DEFAULT_ORIGIN_IATA=DEL
 
 
 ## Installation
+
+Run these from `apps/api/` (this directory):
 
 ```bash
 python -m venv .venv
