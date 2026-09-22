@@ -16,14 +16,20 @@ all coordinated through a LangGraph workflow with MCP-based tool integrations.
 
 ## Features
 
-- ✈️ Flight research using AviationStack
+- ✈️ Flight research using AviationStack (schedules/airlines — not ticket
+  prices; AviationStack's free tier has no fare data, so the agent won't
+  invent a number)
 - 🏨 Hotel suggestions using Tavily search
-- 🌤 Weather lookup via a custom MCP tool
+- 🌤 Weather and multi-day forecast via a custom MCP tool backed by
+  Open-Meteo (free, keyless; forecasts follow the trip's actual dates)
 - 🧠 Multi-agent orchestration with LangGraph and MCP
 - 📝 Structured travel itinerary generation
 - 🌐 FastAPI backend with a simple web interface
-- 💾 Conversation state persistence using PostgreSQL
+- 💾 Conversation state persistence using PostgreSQL (pooled connections)
 - ⚡ LLM-powered responses with Groq
+
+See `docs/blueprint.md` for the longer-term product plan and
+`docs/progress.md` for what's actually been built against it.
 
 
 
@@ -57,6 +63,7 @@ The MCP client is defined in `mcp_client.py`, which exposes async helper functio
 - `weather_mcp_search`
 - `forecast_mcp_search`
 - `extract_destination`
+- `extract_trip_dates`
 
 The main travel workflow in `backend.py` calls these helpers from the flight, hotel, and weather agents.
 
@@ -67,11 +74,16 @@ The main travel workflow in `backend.py` calls these helpers from the flight, ho
 ├── app.py                      # FastAPI app entry point
 ├── backend.py                  # LangGraph travel workflow
 ├── mcp_client.py               # MCP client and tool integration
-├── custom_weather_mcp_server.py# Local weather MCP server
-├── requirements.txt            # Python dependencies
+├── custom_weather_mcp_server.py# Local weather MCP server (Open-Meteo)
+├── requirements.txt            # Runtime dependencies
+├── requirements-dev.txt        # + ruff/pytest for local dev and CI
+├── docker-compose.yml          # Local Postgres for dev
 ├── static/                     # Static frontend assets
 ├── templates/                  # HTML templates
-└── tools/                      # Flight and web search integrations
+├── tools/                      # IATA/airport resolution, used by flight_agent
+├── tests/                      # pytest unit tests (no live network/DB)
+├── docs/                       # Product blueprint + progress tracking
+└── .github/workflows/          # CI (lint + test on push/PR)
 ```
 
 
@@ -86,22 +98,28 @@ Before running the project locally, make sure you have:
   - Groq
   - Tavily
   - AviationStack
-  - OpenWeather
-- `uvx` available for local `aviationstack-mcp` usage (or adjust `mcp_client.py` accordingly)
+- `uv`/`uvx` available for local `aviationstack-mcp` usage — `pip install uv`
+  or see [astral.sh/uv](https://astral.sh/uv) (weather no longer needs a key
+  or subprocess setup beyond that; it's powered by the free, keyless
+  Open-Meteo API)
 
-
+No Postgres of your own? `docker compose up -d postgres` starts one locally
+using `docker-compose.yml` in the repo root.
 
 ## Environment Variables
 
-Create a `.env` file in the project root with the following variables:
+Copy `.env.example` to `.env` and fill in real values:
+
+```bash
+cp .env.example .env
+```
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/travel_db
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/travel_db
 GROQ_API_KEY=your_groq_api_key
 AVIATIONSTACK_API_KEY=your_aviationstack_api_key
 TAVILY_API_KEY=your_tavily_api_key
-OPENWEATHER_API_KEY=your_openweather_api_key
-DEFAULT_ORIGIN_IATA=DAC
+DEFAULT_ORIGIN_IATA=DEL
 ```
 
 
@@ -111,7 +129,15 @@ DEFAULT_ORIGIN_IATA=DAC
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt        # runtime deps
+pip install -r requirements-dev.txt    # + ruff/pytest, for local dev
+```
+
+## Testing and linting
+
+```bash
+pytest        # unit tests — no live network/DB calls
+ruff check .  # lint
 ```
 
 
