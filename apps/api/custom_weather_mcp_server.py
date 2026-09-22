@@ -34,7 +34,47 @@ def describe_weather_code(code) -> str:
     return WEATHER_CODES.get(code, "unknown conditions")
 
 
+# Open-Meteo's free geocoder ranks by a generic popularity score, not by
+# relevance to this product. For "Goa" it returns a 21k-person town in the
+# Philippines before India's Goa — which isn't even indexed as a top-level
+# "city" there at all (it's a state; "Panaji" fuzzy-matches a village in
+# Guatemala instead). TripMate is explicitly India-first (docs/blueprint.md
+# §03), so these are exactly the destinations that matter most, and are
+# worth hand-fixing rather than shipping "wrong city" data for the
+# product's actual target audience. Coordinates are each place's commonly
+# used city/town center.
+KNOWN_LOCATIONS: dict[str, tuple[float, float, str, str]] = {
+    "goa": (15.2993, 74.1240, "Goa", "India"),
+    "panaji": (15.4909, 73.8278, "Panaji", "India"),
+    "manali": (32.2432, 77.1892, "Manali", "India"),
+    "jaipur": (26.9124, 75.7873, "Jaipur", "India"),
+    "delhi": (28.6139, 77.2090, "Delhi", "India"),
+    "new delhi": (28.6139, 77.2090, "New Delhi", "India"),
+    "mumbai": (19.0760, 72.8777, "Mumbai", "India"),
+    "bangalore": (12.9716, 77.5946, "Bangalore", "India"),
+    "bengaluru": (12.9716, 77.5946, "Bengaluru", "India"),
+    "chennai": (13.0827, 80.2707, "Chennai", "India"),
+    "kolkata": (22.5726, 88.3639, "Kolkata", "India"),
+    "hyderabad": (17.3850, 78.4867, "Hyderabad", "India"),
+    "udaipur": (24.5854, 73.7125, "Udaipur", "India"),
+    "shimla": (31.1048, 77.1734, "Shimla", "India"),
+    "rishikesh": (30.0869, 78.2676, "Rishikesh", "India"),
+    "leh": (34.1526, 77.5770, "Leh", "India"),
+    "darjeeling": (27.0410, 88.2663, "Darjeeling", "India"),
+    "pondicherry": (11.9416, 79.8083, "Pondicherry", "India"),
+    "kochi": (9.9312, 76.2673, "Kochi", "India"),
+    "agra": (27.1767, 78.0081, "Agra", "India"),
+    "varanasi": (25.3176, 82.9739, "Varanasi", "India"),
+    "amritsar": (31.6340, 74.8723, "Amritsar", "India"),
+}
+
+
 def geocode_city(city: str):
+    override = KNOWN_LOCATIONS.get(city.strip().lower())
+    if override:
+        lat, lng, name, country = override
+        return {"latitude": lat, "longitude": lng, "resolved_name": name, "country": country}
+
     response = requests.get(
         GEOCODING_URL,
         params={"name": city, "count": 1},

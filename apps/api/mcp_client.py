@@ -101,34 +101,38 @@ def find_tool(tools, name: str):
 search_tool = None
 aviation_tools = {}
 
-async def initialize_mcp():
+async def initialize_search_tool():
+    """Loads only the tavily server's tools. Split from
+    initialize_aviation_tools() (and both from initialize_weather_tools())
+    because MultiServerMCPClient.get_tools() with no server_name connects
+    to every configured server at once — one broken server (e.g. Tavily
+    with an invalid key) used to take down weather and aviation tool
+    lookups too, even though they're otherwise independent.
+    """
 
     global search_tool
-    global aviation_tools
 
-    if search_tool is not None and aviation_tools:
+    if search_tool is not None:
         return
 
-    tools = await client.get_tools()
-
-    print("\nAvailable MCP Tools:\n")
-
-    for tool in tools:
-        print(tool.name)
-
+    tools = await client.get_tools(server_name="tavily")
     search_tool = find_tool(tools, "tavily_search")
 
-    aviation_tools = {
-        tool.name: tool
-        for tool in tools
-        if tool.name != "tavily_search"
-    }
+
+async def initialize_aviation_tools():
+    global aviation_tools
+
+    if aviation_tools:
+        return
+
+    tools = await client.get_tools(server_name="aviationstack")
+    aviation_tools = {tool.name: tool for tool in tools}
 
 
 
 
 async def tavily_mcp_search(query: str):
-    await initialize_mcp()
+    await initialize_search_tool()
     result = await search_tool.ainvoke(
         {
             "query": query
@@ -144,7 +148,7 @@ async def aviation_mcp_call(
     tool_args: dict = None
 ):
 
-    await initialize_mcp()
+    await initialize_aviation_tools()
 
     if tool_name not in aviation_tools:
         available = ", ".join(sorted(aviation_tools)) or "none"
@@ -181,7 +185,7 @@ async def initialize_weather_tools():
     if weather_tool is not None:
         return
 
-    tools = await client.get_tools()
+    tools = await client.get_tools(server_name="weather")
 
     weather_tool = find_tool(tools, "get_current_weather")
     forecast_tool = find_tool(tools, "get_forecast")
