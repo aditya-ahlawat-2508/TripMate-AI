@@ -46,7 +46,7 @@ async def compose_node(state: dict) -> dict:
     plan = await _plan_slots(spec, places, prior_warnings)
 
     days = _build_days(spec, plan, places, weather, state.get("flights") or [], state.get("stays") or [])
-    budget = _compute_budget(days, spec)
+    budget, budget_warnings = _compute_budget(days, spec)
 
     trip = Trip(
         id=uuid.uuid4(),
@@ -59,7 +59,7 @@ async def compose_node(state: dict) -> dict:
         version=state.get("repair_count", 0) + 1,
     )
 
-    return {"trip": trip}
+    return {"trip": trip, "warnings": budget_warnings}
 
 
 async def _plan_slots(spec, places, prior_warnings) -> ComposedPlan:
@@ -158,14 +158,31 @@ def _build_days(spec, plan: ComposedPlan, places, weather, flights, stays) -> li
     return days
 
 
-def _compute_budget(days: list[Day], spec) -> BudgetBreakdown:
+def _compute_budget(days: list[Day], spec) -> tuple[BudgetBreakdown, list[str]]:
+    """Sums slot costs into a single-currency total. Providers can return
+    prices in whatever currency they use natively (Duffel's sandbox
+    returns EUR regardless of route, for instance) — summing amount_minor
+    across different currencies without conversion would silently produce
+    a meaningless number, which is worse than an incomplete one. No FX
+    feed is wired up yet (blueprint §05), so anything not in the primary
+    currency is excluded from the total and surfaced as a warning instead
+    of guessed at.
+    """
+
     currency = spec.budget.currency if spec.budget else "INR"
     total_minor = 0
     by_category: dict[str, int] = {}
+    warnings: list[str] = []
 
     for day in days:
         for slot in day.slots:
             if slot.cost is None:
+                continue
+            if slot.cost.currency != currency:
+                warnings.append(
+                    f"'{slot.title}' is priced in {slot.cost.currency}, not {currency} — "
+                    "excluded from the budget total (no currency conversion wired up yet)"
+                )
                 continue
             total_minor += slot.cost.amount_minor
             by_category[slot.kind] = by_category.get(slot.kind, 0) + slot.cost.amount_minor
@@ -175,9 +192,10 @@ def _compute_budget(days: list[Day], spec) -> BudgetBreakdown:
     if spec.budget is not None:
         fits = total.amount_minor <= spec.budget.amount_minor
 
-    return BudgetBreakdown(
+    budget = BudgetBreakdown(
         total=total,
         limit=spec.budget,
         by_category={k: Money(amount_minor=v, currency=currency) for k, v in by_category.items()},
         fits_budget=fits,
     )
+    return budget, list(dict.fromkeys(warnings))
