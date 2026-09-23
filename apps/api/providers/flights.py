@@ -26,6 +26,10 @@ class DuffelFlightProvider:
     """
 
     name = "duffel"
+    # blueprint §05: short TTL for fares — they move fast enough that a
+    # stale cached price is worse than an extra live call.
+    cache_ttl_seconds = 300
+    result_model = FlightOffer
 
     async def search(self, spec: TripSpec) -> list[FlightOffer]:
         if not DUFFEL_API_KEY:

@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 import providers.flights as flights_module
@@ -5,7 +7,7 @@ import providers.places as places_module
 import providers.routing as routing_module
 import providers.stays as stays_module
 import providers.weather as weather_module
-from models import TripSpec
+from models import Money, TripSpec
 
 
 class FakeResponse:
@@ -114,6 +116,86 @@ async def test_liteapi_provider_returns_empty_without_api_key(monkeypatch):
     monkeypatch.setattr(stays_module, "LITEAPI_KEY", None)
     provider = stays_module.LiteAPIStayProvider()
     assert await provider.search(TripSpec(destination="Goa")) == []
+
+
+@pytest.mark.asyncio
+async def test_liteapi_provider_returns_empty_without_destination(monkeypatch):
+    monkeypatch.setattr(stays_module, "LITEAPI_KEY", "sand_fake")
+    provider = stays_module.LiteAPIStayProvider()
+    assert await provider.search(TripSpec()) == []
+
+
+@pytest.mark.asyncio
+async def test_liteapi_provider_parses_real_response_shape(monkeypatch):
+    # Shapes taken from a real sandbox call (docs/progress.md) — id, name,
+    # rating, lat/lng from /data/hotels; retailRate.total (whole-stay, not
+    # per-night — divided out below) from /hotels/rates.
+    hotels_response = FakeResponse({
+        "data": [
+            {"id": "lp85b47", "name": "Kesarval The Fern Goa", "rating": 7.6, "latitude": 15.38, "longitude": 73.93},
+            {"id": "lp_norate", "name": "No Availability Inn", "rating": 5.0, "latitude": 15.4, "longitude": 73.9},
+        ]
+    })
+    rates_response = FakeResponse({
+        "data": [
+            {
+                "hotelId": "lp85b47",
+                "roomTypes": [
+                    {"rates": [{"retailRate": {"total": [{"amount": 11147.14, "currency": "INR"}]}}]}
+                ],
+            },
+            {"hotelId": "lp_norate", "roomTypes": []},
+        ]
+    })
+
+    class SequencedFakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, *a, **k):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **k):
+            self.calls.append("get")
+            return hotels_response
+
+        async def post(self, *a, **k):
+            self.calls.append("post")
+            return rates_response
+
+    monkeypatch.setattr(stays_module, "LITEAPI_KEY", "sand_fake")
+    monkeypatch.setattr(stays_module.httpx, "AsyncClient", SequencedFakeClient())
+    monkeypatch.setattr(stays_module, "geocode_city", lambda city: {"latitude": 15.3, "longitude": 73.9})
+
+    provider = stays_module.LiteAPIStayProvider()
+    spec = TripSpec(
+        origin="Delhi", destination="Goa",
+        date_start=date(2026, 11, 15), date_end=date(2026, 11, 17),  # 2 nights
+        travelers=2, budget=Money(amount_minor=3000000, currency="INR"),
+    )
+    result = await provider.search(spec)
+
+    assert len(result) == 1  # the no-rates hotel is dropped, not guessed at
+    offer = result[0]
+    assert offer.id == "lp85b47"
+    assert offer.name == "Kesarval The Fern Goa"
+    assert offer.price_per_night.amount_minor == round(11147.14 / 2 * 100)  # whole-stay total / 2 nights
+    assert offer.price_per_night.currency == "INR"
+    assert offer.source.provider == "liteapi"
+
+
+@pytest.mark.asyncio
+async def test_liteapi_provider_unresolvable_destination_returns_empty(monkeypatch):
+    monkeypatch.setattr(stays_module, "LITEAPI_KEY", "sand_fake")
+    monkeypatch.setattr(stays_module, "geocode_city", lambda city: None)
+    provider = stays_module.LiteAPIStayProvider()
+    assert await provider.search(TripSpec(destination="Nowhereland")) == []
 
 
 def test_tavily_extract_items_handles_dict_and_list():

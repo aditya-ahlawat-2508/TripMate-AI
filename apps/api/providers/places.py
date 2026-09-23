@@ -18,6 +18,11 @@ class OverpassPlacesProvider:
     """
 
     name = "overpass"
+    # Long TTL — POIs barely change day to day, and this also means a
+    # transient Overpass 504 (seen live, docs/progress.md) only costs one
+    # real request per destination instead of one per trip request.
+    cache_ttl_seconds = 86400
+    result_model = Place
 
     async def search(self, spec: TripSpec, radius_m: int = 5000, limit: int = 20) -> list[Place]:
         if not spec.destination:

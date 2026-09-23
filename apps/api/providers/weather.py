@@ -28,6 +28,8 @@ class OpenMeteoWeatherProvider:
     weather_agent uses (see custom_weather_mcp_server.py)."""
 
     name = "open-meteo"
+    cache_ttl_seconds = 3600  # forecasts update a few times a day, not per-request
+    result_model = DayWeather
 
     async def forecast(self, spec: TripSpec) -> list[DayWeather]:
         if not spec.destination:

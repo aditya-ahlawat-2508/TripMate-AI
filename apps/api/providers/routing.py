@@ -36,6 +36,8 @@ class OSRMGroundProvider:
     """
 
     name = "osrm-demo"
+    cache_ttl_seconds = 86400  # driving time between two cities doesn't change
+    result_model = GroundOption
 
     async def estimate(self, spec: TripSpec) -> list[GroundOption]:
         if not spec.origin or not spec.destination:
