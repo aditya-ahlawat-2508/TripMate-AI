@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import posthog from "posthog-js";
 import { useState } from "react";
 
+import { SiteHeader } from "@/components/site-header";
 import { SlotMap } from "@/components/slot-map";
 import { formatDate, formatMoney, formatTime } from "@/lib/format";
 import type { Trip } from "@/lib/types";
@@ -20,14 +21,7 @@ export function TripWorkspace({ trip }: { trip: Trip }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <Link href="/" className="text-lg font-semibold text-primary">
-            TripMate AI
-          </Link>
-          <CopyLinkButton />
-        </div>
-      </header>
+      <SiteHeader right={<CopyLinkButton tripId={trip.id} />} />
 
       <main className="mx-auto max-w-5xl px-4 py-8">
         <h1 className="text-2xl font-bold text-foreground">
@@ -148,12 +142,13 @@ export function TripWorkspace({ trip }: { trip: Trip }) {
   );
 }
 
-function CopyLinkButton() {
+function CopyLinkButton({ tripId }: { tripId: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       onClick={() => {
         navigator.clipboard.writeText(window.location.href);
+        posthog.capture("trip_shared", { trip_id: tripId });
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       }}

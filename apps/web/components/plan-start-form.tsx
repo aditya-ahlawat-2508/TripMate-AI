@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { useState } from "react";
 
 export function PlanStartForm() {
@@ -11,6 +12,7 @@ export function PlanStartForm() {
     e.preventDefault();
     const message = value.trim();
     if (!message) return;
+    posthog.capture("plan_started", { message_length: message.length });
     router.push(`/plan?message=${encodeURIComponent(message)}`);
   }
 

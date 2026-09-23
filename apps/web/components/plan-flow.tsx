@@ -1,6 +1,8 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
+import posthog from "posthog-js";
 import { useEffect, useRef, useState } from "react";
 
 import { resumePlan, startPlan } from "@/lib/api";
@@ -13,6 +15,7 @@ type Step =
 export function PlanFlow() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { getToken } = useAuth();
   const message = searchParams.get("message") || "";
   const startedRef = useRef(false);
 
@@ -23,7 +26,7 @@ export function PlanFlow() {
   useEffect(() => {
     if (startedRef.current || !message) return;
     startedRef.current = true;
-    startPlan(message).then(handleResponse);
+    getToken().then((token) => startPlan(message, token).then(handleResponse));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [message]);
 
@@ -37,6 +40,7 @@ export function PlanFlow() {
       setStep({ kind: "question", threadId: res.thread_id, question: res.question.question });
       return;
     }
+    posthog.capture("trip_completed", { trip_id: res.trip.id, destination: res.trip.spec.destination });
     router.push(`/trip/${res.trip.id}`);
   }
 
@@ -47,7 +51,7 @@ export function PlanFlow() {
     setLog((l) => [...l, { from: "you", text: value }]);
     setAnswer("");
     setStep({ kind: "loading" });
-    resumePlan(step.threadId, value).then(handleResponse);
+    getToken().then((token) => resumePlan(step.threadId, value, token).then(handleResponse));
   }
 
   return (

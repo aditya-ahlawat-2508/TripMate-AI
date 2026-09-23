@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PlanStartForm } from "@/components/plan-start-form";
+import { SiteHeader } from "@/components/site-header";
 import { getDemoTrips } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 
@@ -9,12 +10,7 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <span className="text-lg font-semibold text-primary">TripMate AI</span>
-          <span className="text-xs text-muted">budget-true, India-first trip planning</span>
-        </div>
-      </header>
+      <SiteHeader right={<span className="hidden text-xs text-muted sm:inline">budget-true, India-first trip planning</span>} />
 
       <main className="mx-auto max-w-5xl px-4 py-16">
         <section className="text-center">
