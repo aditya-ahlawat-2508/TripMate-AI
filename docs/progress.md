@@ -358,10 +358,71 @@ documented Next.js App Router pattern.
 **Sentry**: explicitly skipped per project owner's instruction this
 session.
 
+## Phase 6 — Real Groq key + real browser verification (done: 2026-09-23)
+
+Project owner provided a real `GROQ_API_KEY`. This was the last major
+unverified assumption in the typed graph, and testing it end-to-end
+immediately surfaced two 100%-failure-rate bugs that the mocked test
+suite could never have caught (mocks assume well-formed LLM output —
+these were about Groq's *strict tool-schema validation* rejecting
+otherwise-correct output):
+
+1. `PlannedSlot.start`/`end` were `datetime.time`. Groq's schema
+   validator wants `"HH:MM:SS"` for a time-formatted string; the model
+   naturally emits `"HH:MM"` (`"08:00"`) — every composer call failed
+   validation and silently fell back to an empty itinerary. Fixed:
+   `start`/`end` are now plain strings parsed leniently by
+   `_parse_time()` (tries `HH:MM:SS` then `HH:MM`, falls back to a sane
+   default rather than crashing).
+2. `TripSpec.interests`/`constraints` were bare `list[str]`. When the
+   model has nothing to put there it emits `null`, not `[]` — rejected
+   by a plain `"type": "array"` schema, failing every intake call that
+   didn't explicitly state interests/constraints. Fixed: both fields are
+   `list[str] | None` (schema permits null) with a
+   `@model_validator(mode="after")` normalizing `None` back to `[]`.
+
+Also extended the intake prompt to compute `date_end` from a stated trip
+length ("2 day trip" + a start date) instead of leaving it null.
+
+**Verified end-to-end with real everything** (Groq, Duffel, Open-Meteo,
+Overpass): "Plan a 2 day trip from Delhi to Goa starting 2026-11-15 for
+2 travelers, budget 30000 rupees, relaxed pace, interested in beaches"
+now produces a real, sensible 2-day itinerary — real beaches (Calangute,
+Baga, Anjuna), real restaurants, real per-day weather, a real flight,
+and a budget that correctly excludes the EUR-priced flight with a clear
+warning rather than corrupting the total. Confirmed via Langfuse's API
+that real `intake`/`compose` traces are landing (had to use
+`GET /api/public/v2/observations` — the v1 traces endpoint is retired
+for organizations created after 2026-09-16, also learned live).
+
+**Real browser verification**: found real Chrome already installed
+(`/Applications/Google Chrome.app`) and drove it headlessly via
+Playwright's `channel: "chrome"` — no Chromium download needed. Full
+anonymous flow exercised end-to-end: landing page → fill the plan form →
+`/plan` → real clarify-free completion (all fields given upfront) →
+redirect to `/trip/[id]` → verified 2 day tabs, a real budget panel, and
+screenshotted both the landing page and the finished trip workspace.
+**The trip workspace screenshot is genuinely good** — clean layout, real
+sourced data throughout, the SVG map correctly plots and connects the
+day's located slots, warnings banner reads clearly. This is the first
+time any of this session's frontend work has been confirmed to actually
+render correctly in a browser rather than just type-check and build.
+
+**Real bug found this way**: the PostHog key the project owner provided
+(`phs_...`) 404s against PostHog's config endpoint —
+`us-assets.i.posthog.com/array/phs_.../config` returns 404, meaning
+PostHog analytics is **not actually capturing events** even though the
+integration code is correct. PostHog's client-tracking project keys
+normally start with `phc_`, not `phs_` — this looks like the wrong key
+was copied from the dashboard (a personal/other API key, not the
+"Project API Key" used for `posthog.init()`). Not something more code
+can fix; needs the project owner to grab the right key.
+
 ## What's still genuinely blocked (needs the project owner, not more code)
 
 - **LiteAPI** (`LITEAPI_KEY`) — sign up at liteapi.travel, implement
   `LiteAPIStayProvider.search()` (currently a stub).
+- **The right PostHog key** — see above; current one 404s.
 - **Sentry** — skipped this session by explicit instruction.
 - **Razorpay webhook** — needs a publicly reachable URL (a real
   deployment) to configure the webhook and get `RAZORPAY_WEBHOOK_SECRET`;
@@ -369,28 +430,23 @@ session.
 - Indian rail/bus data — needs an IRCTC-authorised partner or bus
   aggregator affiliate deal; no free keyless equivalent exists. Skipped
   this session by explicit instruction.
-- **A real `GROQ_API_KEY`** — still a placeholder. Without it, the typed
-  graph's `intake`/`compose` LLM calls keep failing over to their
-  fallback paths (empty spec → clarify asks everything; empty composed
-  plan). Langfuse tracing, the composer's actual itinerary-building, and
-  the legacy `/api/travel` endpoint are all silently degraded until this
-  is real. This has been true since the start of the typed-graph work but
-  is worth calling out explicitly now that almost everything else is
-  live-verified except this.
-- Production deployment (needed for: the Razorpay webhook above, testing
-  Clerk in a real browser, a custom domain, uptime monitoring).
+- Production deployment (needed for: the Razorpay webhook above, a real
+  Clerk sign-in test with a real user account, a custom domain, uptime
+  monitoring).
+- A real Tavily key — still a placeholder, so hotel search/stays are
+  never populated (confirmed live: `tavily-search` 401s every time).
 
 ## Next session should start with
 
-1. Get a real `GROQ_API_KEY` — this is now the single biggest gap: it
-   silently degrades the typed graph's core value (structured intake and
-   composition) and blocks verifying Langfuse traces end-to-end.
-2. Golden-set eval suite (blueprint §09) — buildable and testable
-   entirely with the free/keyless providers, and is the actual
-   launch-gate metric ("0 unsourced prices, 0 wrong-city places").
-3. A real browser/Playwright session to verify the Clerk sign-in flow,
-   the `/plan` clarify loop, and the Razorpay checkout modal — none of
-   these have been visually exercised, only verified at the API/unit
-   level.
-4. LiteAPI, once a key exists — same pattern as Duffel: implement, verify
-   live, fix whatever's wrong.
+1. Golden-set eval suite (blueprint §09) — now the highest-value next
+   piece, and fully buildable/testable with what's already live-verified
+   (real Groq, Duffel, weather, places): "0 unsourced prices, 0
+   wrong-city places" is the actual launch-gate metric and has no
+   automated check yet beyond the unit/graph tests.
+2. LiteAPI and a real Tavily key, once available — same pattern as
+   Duffel: implement/fix, verify live.
+3. The right PostHog key.
+4. A real Clerk sign-in test (needs an actual user account, not just
+   route-level auth checks) — everything up to that point (JWKS
+   verification, route gating, 401s) is now verified; the interactive
+   sign-in modal itself still isn't.
