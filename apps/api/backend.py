@@ -64,9 +64,11 @@ if not GROQ_API_KEY:
 # =========================
 # LLM
 # =========================
+# llama-3.3-70b-versatile was deprecated/removed from Groq at some point;
+# openai/gpt-oss-120b confirmed live as of 2026-09-23 (see graph/llm.py).
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="openai/gpt-oss-120b",
     api_key=GROQ_API_KEY
 )
 
