@@ -155,11 +155,10 @@ warning not a crash.
   production volume" caveat. Rail/bus stays unavailable — no free keyless
   Indian rail/bus API exists; needs the IRCTC/bus-aggregator partnership
   blueprint §05 already flagged as a manual step.
-- **Flights** (`flights.py`): `DuffelFlightProvider` implemented against
-  Duffel's public v2 Offer Requests API docs, gated on `DUFFEL_API_KEY`.
-  **Untested against a live key** — none was available. Wrapped by
-  `call_provider`, so a wrong request/response shape surfaces as a
-  warning, not a crash. First thing to verify once a real key exists.
+- **Flights** (`flights.py`): `DuffelFlightProvider`, **verified working
+  end-to-end against a real Duffel test-mode key** (2026-09-23) — real
+  offers, real airlines, for a DEL→GOA route. One real bug found in the
+  process, now fixed (see "Duffel verification" below).
 - **Stays** (`stays.py`): `LiteAPIStayProvider` stub (same honesty pattern
   as Duffel, gated on `LITEAPI_KEY`, not implemented). Falls back to
   `TavilyStaySearchProvider` — hotel *names and links* from the existing
@@ -170,6 +169,30 @@ warning not a crash.
   Redis added to `infra/docker-compose.yml`. **Not yet wired into any
   provider call site** — the plumbing exists, the actual caching-decorator
   integration is still open.
+
+## Duffel verification (2026-09-23)
+
+Project owner got a Duffel test-mode key (`DUFFEL_API_KEY` in
+`apps/api/.env`, never committed). `DuffelFlightProvider.search()` works
+on the first real call — 10 offers, real airline names (British Airways,
+Iberia, plus Duffel's own test airline), plausible schedule/duration data
+for a DEL→GOA search.
+
+**One real bug found and fixed by this**: Duffel's sandbox returns fares
+in **EUR** regardless of route or origin — not the INR `TripSpec.budget`
+defaults to. `compose.py:_compute_budget` was summing every slot's
+`Money.amount_minor` regardless of currency, which would have silently
+produced a meaningless total the moment a EUR flight sat next to an INR
+stay. Fixed: the budget total only includes slots matching the trip's
+own currency; anything else is excluded from the sum and surfaces as an
+explicit warning (`'Flight: ...' is priced in EUR, not INR — excluded
+from the budget total`) instead of being silently mixed in or dropped.
+No FX conversion is wired up — blueprint §05 already flags this as a
+real, not-yet-built need. 4 new unit tests in `test_compose.py`, plus
+live end-to-end confirmation the warning shows up correctly through the
+real API.
+
+`LiteAPIStayProvider` is still a stub — no LiteAPI key yet.
 
 **Two real bugs found and fixed while live-testing against the free
 providers** (not caught by mocked tests, since the mocks assumed
@@ -247,31 +270,127 @@ Trips dashboard, alerts, and settings/billing screens from blueprint
 §07's screen inventory don't exist — they need auth (Phase 5) to mean
 anything (whose trips would a dashboard list?).
 
+## Phase 5 — SaaS foundations (done: 2026-09-23, partial by design)
+
+Project owner provided real test-mode/sandbox keys for Clerk, Razorpay,
+Langfuse, and PostHog (2026-09-23) — all wired in and where possible,
+live-verified rather than just written against docs.
+
+**Langfuse** (`observability.py`): `get_langfuse_callbacks()` returns a
+`CallbackHandler` (empty list if unconfigured — never breaks a call).
+Wired into both LLM call sites in the typed graph (`graph/intake.py`,
+`graph/compose.py` — `config={"callbacks": ...}`). **Verified live**:
+`Langfuse().auth_check()` returned `True` and a manual trace was sent
+successfully. The actual LangChain-integration traces (from real
+`intake`/`compose` calls) aren't yet visible in the dashboard, because
+`GROQ_API_KEY` is still a placeholder — nothing has called through the
+LangChain callback path for real yet. Not wired into the legacy
+`backend.py` graph (lower priority; that graph is being phased out).
+
+**Clerk** (`auth.py`, `apps/web` `middleware.ts`→`proxy.ts`): JWT
+verification via `PyJWKClient` against Clerk's public JWKS — no Clerk
+Python SDK dependency. `CLERK_ISSUER` is the Frontend API host decoded
+from the publishable key's base64 payload. **Verified**: JWKS endpoint
+fetches real signing keys live; 9 unit tests exercise the full
+verify/reject path with a self-signed RSA keypair (valid signature
+accepted, wrong key rejected, wrong issuer rejected — not just "does it
+parse"). `get_current_user_id` (optional, never raises) vs
+`require_user_id` (401s) as separate FastAPI dependencies, matching
+where auth should be optional (`/api/plan`, still works anonymously) vs
+required (`/api/trips`, `/api/billing/*`).
+
+This is the actual fix for the audit's Critical IDOR item:
+`trips_store.py` got a nullable `owner_id` column (migrated
+idempotently via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so an
+already-running deployment picks it up without a manual step); `/api/plan`
+attaches the signed-in user's ID when present; `GET /api/trips` (new)
+returns only that user's own trips and 401s otherwise — verified live
+(unauthenticated request → 401).
+
+Frontend: `ClerkProvider` wraps the root layout; `SiteHeader` (new,
+replaces the ad-hoc headers on the landing/trip-workspace pages) shows
+sign-in or a user menu + "My Trips"/"Billing" links. **Real bug found and
+fixed**: `@clerk/nextjs`'s newest major version ("Core 3") removed
+`<SignedIn>`/`<SignedOut>`/`<Protect>` entirely — they now throw on
+render by design, pointing at a migration doc. `SiteHeader` was rewritten
+to use `useAuth()`'s `isLoaded`/`isSignedIn` instead. Also needed
+`CLERK_SECRET_KEY` set in **both** `apps/api/.env` and
+`apps/web/.env.local` — they're separate processes that don't share
+environment variables, which wasn't obvious until the dev server actually
+threw "Missing secretKey" at runtime.
+
+`app/trips/page.tsx` (new): server component, redirects to `/` if signed
+out, otherwise lists the user's trips via `GET /api/trips`. **Not
+verified**: the actual interactive sign-in flow (Clerk's modal, a real
+session, a token round-tripping to the backend) — no headless browser
+available this pass. Verified instead: unauthenticated `/trips` and
+`/billing` both 307-redirect correctly (proves the route-level auth
+gating works); the JWT verification logic itself is fully tested (above).
+
+**Razorpay** (`payments.py`, `subscriptions_store.py`): `create_pro_order()`
+**verified live** — created a real order (`order_TfOx58M4jd32ba`) against
+Razorpay's test-mode API with the real amount/currency/notes. Webhook
+signature verification (`verify_webhook_signature`) is unit-tested against
+real HMAC-SHA256 signing (accepts valid, rejects wrong signature, rejects
+a tampered body) but **not exercised against an actual webhook delivery**
+— that needs `RAZORPAY_WEBHOOK_SECRET` from a webhook configured in the
+Razorpay dashboard pointing at a publicly reachable URL, which doesn't
+exist yet (no deployment). Until then, `POST /api/billing/webhook`
+correctly fails closed (400) rather than trusting an unsigned/unconfigured
+request. `subscriptions` table (owner_id, plan, status,
+razorpay_order_id/payment_id) mirrors blueprint §08's data model.
+`POST /api/billing/create-order` (401 if signed out — verified live) and
+`GET /api/billing/status` round out the API; `app/billing/page.tsx` +
+`components/upgrade-button.tsx` open Razorpay's real Checkout.js modal.
+Pro plan priced at ₹249/mo (blueprint's own ₹199-299 range, picked as a
+starting midpoint — still an unvalidated hypothesis per blueprint §03).
+
+**PostHog** (`components/posthog-provider.tsx`): client-side init,
+manual `$pageview` capture (so App Router client-navigations get tracked,
+not just full loads), plus three funnel events from blueprint §08's
+"landing → wizard → plan → share → booking click": `plan_started`
+(landing page form submit), `trip_completed` (graph returns a finished
+Trip), `trip_shared` (share-link copy click). Not verified live (would
+need a real browser session hitting PostHog's ingestion API) — the
+initialization code path is straightforward and matches PostHog's
+documented Next.js App Router pattern.
+
+**Sentry**: explicitly skipped per project owner's instruction this
+session.
+
 ## What's still genuinely blocked (needs the project owner, not more code)
 
-- **Duffel** (`DUFFEL_API_KEY`) — sign up at duffel.com, verify
-  `DuffelFlightProvider` against a real response, fix whatever's wrong.
 - **LiteAPI** (`LITEAPI_KEY`) — sign up at liteapi.travel, implement
   `LiteAPIStayProvider.search()` (currently a stub).
-- **Clerk** — sign up, wire into `apps/web` (middleware, sign-in/up
-  pages) and verify JWTs in a FastAPI dependency. Everything downstream
-  of auth (per-user trip ownership, quotas, rate limiting, the real IDOR
-  fix, a trips dashboard) is blocked on this.
-- **Razorpay** — sign up, webhook → subscriptions table → entitlements.
-- **PostHog / Sentry / Langfuse** — sign up for each; none of this
-  session's code emits to them yet.
+- **Sentry** — skipped this session by explicit instruction.
+- **Razorpay webhook** — needs a publicly reachable URL (a real
+  deployment) to configure the webhook and get `RAZORPAY_WEBHOOK_SECRET`;
+  can't be done from localhost.
 - Indian rail/bus data — needs an IRCTC-authorised partner or bus
-  aggregator affiliate deal; no free keyless equivalent exists.
+  aggregator affiliate deal; no free keyless equivalent exists. Skipped
+  this session by explicit instruction.
+- **A real `GROQ_API_KEY`** — still a placeholder. Without it, the typed
+  graph's `intake`/`compose` LLM calls keep failing over to their
+  fallback paths (empty spec → clarify asks everything; empty composed
+  plan). Langfuse tracing, the composer's actual itinerary-building, and
+  the legacy `/api/travel` endpoint are all silently degraded until this
+  is real. This has been true since the start of the typed-graph work but
+  is worth calling out explicitly now that almost everything else is
+  live-verified except this.
+- Production deployment (needed for: the Razorpay webhook above, testing
+  Clerk in a real browser, a custom domain, uptime monitoring).
 
 ## Next session should start with
 
-1. Run `python -m scripts.seed_demo_trips` (needs `ensure_trips_table` to
-   have run at least once — start the app once first) and sanity-check
-   `/api/demo-trips` + the landing page.
-2. Decide: keep building Phase 5 (SaaS foundations) now, or pause to
-   actually get Duffel/LiteAPI/Clerk keys first so Phase 3/5 code can be
-   verified against real responses instead of shipped untested.
-3. If continuing without those keys: golden-set eval suite (blueprint
-   §09) is the highest-value next piece — it's buildable and testable
-   entirely with the free/keyless providers already wired up, and is the
-   actual launch-gate metric ("0 unsourced prices, 0 wrong-city places").
+1. Get a real `GROQ_API_KEY` — this is now the single biggest gap: it
+   silently degrades the typed graph's core value (structured intake and
+   composition) and blocks verifying Langfuse traces end-to-end.
+2. Golden-set eval suite (blueprint §09) — buildable and testable
+   entirely with the free/keyless providers, and is the actual
+   launch-gate metric ("0 unsourced prices, 0 wrong-city places").
+3. A real browser/Playwright session to verify the Clerk sign-in flow,
+   the `/plan` clarify loop, and the Razorpay checkout modal — none of
+   these have been visually exercised, only verified at the API/unit
+   level.
+4. LiteAPI, once a key exists — same pattern as Duffel: implement, verify
+   live, fix whatever's wrong.
