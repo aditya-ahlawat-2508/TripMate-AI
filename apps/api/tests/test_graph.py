@@ -17,7 +17,7 @@ class FakeStructuredLLM:
         # the same test — e.g. the repair loop calling compose_node twice.
         self._responses = responses
 
-    async def ainvoke(self, _messages):
+    async def ainvoke(self, _messages, **_kwargs):
         if len(self._responses) > 1:
             return self._responses.pop(0)
         return self._responses[0]

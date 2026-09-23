@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from models import BudgetBreakdown, Day, Money, Slot, Trip
+from observability import get_langfuse_callbacks
 
 from .llm import get_composer_llm
 
@@ -85,7 +86,8 @@ Available places:
 
     try:
         return await structured_llm.ainvoke(
-            [SystemMessage(content=COMPOSER_SYSTEM), HumanMessage(content=prompt)]
+            [SystemMessage(content=COMPOSER_SYSTEM), HumanMessage(content=prompt)],
+            config={"callbacks": get_langfuse_callbacks(), "run_name": "compose"},
         )
     except Exception as exc:
         logger.warning("Composer LLM call failed, returning an empty plan: %s", exc)

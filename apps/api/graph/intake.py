@@ -4,6 +4,7 @@ from datetime import date
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from models import TripSpec
+from observability import get_langfuse_callbacks
 
 from .llm import get_llm
 
@@ -29,7 +30,8 @@ async def intake_node(state: dict) -> dict:
             [
                 SystemMessage(content=INTAKE_SYSTEM.format(today=date.today().isoformat())),
                 HumanMessage(content=state["user_query"]),
-            ]
+            ],
+            config={"callbacks": get_langfuse_callbacks(), "run_name": "intake"},
         )
     except Exception as exc:
         logger.warning("Structured intake failed, falling back to an empty spec: %s", exc)
