@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -102,7 +102,7 @@ async def test_full_run_produces_valid_trip(monkeypatch, full_spec):
 
     places = [make_place("p1", 15.5, 73.8, "Baga Beach")]
     plan = ComposedPlan(slots=[
-        PlannedSlot(day_index=0, start=time(10, 0), end=time(12, 0), kind="activity", title="Baga Beach", place_id="p1"),
+        PlannedSlot(day_index=0, start="10:00:00", end="12:00:00", kind="activity", title="Baga Beach", place_id="p1"),
     ])
 
     compiled = build_graph_with_mocks(monkeypatch, intake_spec=full_spec, composed_plans=[plan], places=places)
@@ -147,7 +147,7 @@ async def test_composer_hallucinated_place_id_is_dropped(monkeypatch, full_spec)
     from graph.compose import ComposedPlan, PlannedSlot
 
     plan = ComposedPlan(slots=[
-        PlannedSlot(day_index=0, start=time(10, 0), end=time(11, 0), kind="activity", title="Made up place", place_id="does-not-exist"),
+        PlannedSlot(day_index=0, start="10:00:00", end="11:00:00", kind="activity", title="Made up place", place_id="does-not-exist"),
     ])
     compiled = build_graph_with_mocks(monkeypatch, intake_spec=full_spec, composed_plans=[plan], places=[])
     config = {"configurable": {"thread_id": "t-hallucinate"}}
@@ -164,10 +164,10 @@ async def test_overloaded_day_triggers_repair_loop(monkeypatch, full_spec):
     places = [make_place("p1", 15.5, 73.8, "Baga Beach")]
 
     overloaded_plan = ComposedPlan(slots=[
-        PlannedSlot(day_index=0, start=time(6, 0), end=time(20, 0), kind="activity", title="Marathon sightseeing", place_id="p1"),
+        PlannedSlot(day_index=0, start="06:00:00", end="20:00:00", kind="activity", title="Marathon sightseeing", place_id="p1"),
     ])
     fixed_plan = ComposedPlan(slots=[
-        PlannedSlot(day_index=0, start=time(9, 0), end=time(11, 0), kind="activity", title="Baga Beach", place_id="p1"),
+        PlannedSlot(day_index=0, start="09:00:00", end="11:00:00", kind="activity", title="Baga Beach", place_id="p1"),
     ])
 
     compiled = build_graph_with_mocks(
@@ -193,7 +193,7 @@ async def test_repair_budget_exhausts_and_still_finalizes(monkeypatch, full_spec
 
     places = [make_place("p1", 15.5, 73.8, "Baga Beach")]
     always_overloaded = ComposedPlan(slots=[
-        PlannedSlot(day_index=0, start=time(6, 0), end=time(20, 0), kind="activity", title="Marathon sightseeing", place_id="p1"),
+        PlannedSlot(day_index=0, start="06:00:00", end="20:00:00", kind="activity", title="Marathon sightseeing", place_id="p1"),
     ])
 
     compiled = build_graph_with_mocks(

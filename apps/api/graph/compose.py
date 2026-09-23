@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -22,16 +22,33 @@ Rules:
   real flight/stay data, not from you.
 - Respect the trip's pace: relaxed = 2-3 activities/day, balanced = 3-4, packed = 5+.
 - Keep each day's activity slots within a plausible single day (roughly 08:00-21:00).
+- start and end must be in exactly HH:MM:SS 24-hour format (e.g. "08:00:00", not "8am" or "08:00").
 """
 
 
 class PlannedSlot(BaseModel):
     day_index: int = Field(description="0-based day offset from the trip's start date")
-    start: time
-    end: time
+    # Deliberately str, not datetime.time: Groq's strict tool-schema
+    # validator rejects "HH:MM" (which the model naturally produces) as
+    # too short for its `format: time` check, which wants "HH:MM:SS" —
+    # every composer call failed validation and silently fell back to an
+    # empty plan until this was loosened to a plain string, parsed by
+    # _parse_time() below instead of trusting the model's exact format.
+    start: str = Field(description="24-hour time, e.g. 08:00 or 08:00:00")
+    end: str = Field(description="24-hour time, e.g. 11:30 or 11:30:00")
     kind: str = Field(description="one of: activity, meal, transit")
     title: str
     place_id: str | None = None
+
+
+def _parse_time(value: str, fallback: time) -> time:
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(value.strip(), fmt).time()
+        except ValueError:
+            continue
+    logger.warning("Composer returned an unparseable time %r, using %s", value, fallback)
+    return fallback
 
 
 class ComposedPlan(BaseModel):
@@ -112,8 +129,8 @@ def _build_days(spec, plan: ComposedPlan, places, weather, flights, stays) -> li
 
         days[planned.day_index].slots.append(
             Slot(
-                start=planned.start,
-                end=planned.end,
+                start=_parse_time(planned.start, time(9, 0)),
+                end=_parse_time(planned.end, time(10, 0)),
                 kind=planned.kind if planned.kind in {"activity", "meal", "transit", "stay"} else "activity",
                 place_id=place.id if place else None,
                 title=planned.title,

@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, time
 
-from graph.compose import _compute_budget
+from graph.compose import _compute_budget, _parse_time
 from models import Day, Money, Slot, Source, TripSpec
 
 
@@ -67,3 +67,23 @@ def test_compute_budget_deduplicates_repeated_warnings():
 
     _, warnings = _compute_budget([day, day2], spec)
     assert len(warnings) == 1
+
+
+def test_parse_time_accepts_hh_mm_ss():
+    assert _parse_time("08:30:00", fallback=time(0, 0)) == time(8, 30)
+
+
+def test_parse_time_accepts_hh_mm():
+    # The real bug: Groq's tool-schema validator wanted HH:MM:SS and
+    # rejected the HH:MM the model actually produces, failing every
+    # composer call. start/end are parsed leniently instead of trusting
+    # the model's exact format.
+    assert _parse_time("08:30", fallback=time(0, 0)) == time(8, 30)
+
+
+def test_parse_time_falls_back_on_garbage():
+    assert _parse_time("not a time", fallback=time(9, 0)) == time(9, 0)
+
+
+def test_parse_time_strips_whitespace():
+    assert _parse_time("  08:30  ", fallback=time(0, 0)) == time(8, 30)

@@ -14,7 +14,10 @@ INTAKE_SYSTEM = """Extract trip-planning details from the user's message into th
 Today's date is {today}. Rules:
 - If the user asks you to suggest/surprise them with a destination, set suggest_destination=true
   and leave destination null.
-- If no dates are mentioned, leave date_start/date_end null (don't guess a date).
+- If a start date is given but no end date, and a trip LENGTH is stated (e.g. "3 day trip",
+  "for a week"), compute date_end = date_start + (length - 1) days. A "2 day trip" starting
+  2026-11-15 means date_end = 2026-11-16 (2 calendar days total, not +2).
+- If truly no dates or duration are mentioned at all, leave date_start/date_end null (don't guess).
 - If a budget is mentioned, convert it into whole-currency-unit minor units (e.g. Rs 20,000 ->
   amount_minor=2000000, currency="INR"). If no budget is mentioned, leave budget null.
 - Never invent an origin, destination, or date that isn't stated or clearly implied.

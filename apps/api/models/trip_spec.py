@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .money import Money
 
@@ -21,8 +21,23 @@ class TripSpec(BaseModel):
     travelers: int = 1
     budget: Money | None = None
     pace: Literal["relaxed", "balanced", "packed"] = "balanced"
-    interests: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
+    # list[str] | None rather than a bare list[str]: Groq's strict
+    # tool-schema validator rejected the model's own "nothing to put
+    # here" output of `null` against a plain `"type": "array"` schema
+    # (every intake call with no stated interests/constraints failed
+    # validation). None is allowed at the schema level and normalized
+    # back to [] below, so the rest of the codebase never has to
+    # special-case None.
+    interests: list[str] | None = Field(default=None)
+    constraints: list[str] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _normalize_none_lists(self) -> "TripSpec":
+        if self.interests is None:
+            self.interests = []
+        if self.constraints is None:
+            self.constraints = []
+        return self
 
     def missing_required_fields(self) -> list[str]:
         missing = []
